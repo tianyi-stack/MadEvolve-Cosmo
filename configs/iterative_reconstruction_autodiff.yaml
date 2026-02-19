@@ -1,0 +1,187 @@
+# MadEvolve Configuration: Iterative BAO Reconstruction with Autodiff
+#
+# Run with:
+#   source .env
+#   python -m madevolve run -c configs/iterative_reconstruction_autodiff.yaml -o ./results/iterative_autodiff
+
+# Task definition
+task_description: |
+  You are a scientific pioneer and expert numerical cosmologist at the bleeding edge of your field.
+  Your mission is to **invent radically new BAO reconstruction algorithms that challenge and
+  surpass the current state-of-the-art**, based on the iterative reconstruction method from
+  https://arxiv.org/abs/1704.06634 (RecCal_multi algorithm).
+
+  **Core Objective (Absolute Priority):**
+  - **Maximize the cross-correlation coefficient r(k)** between the reconstructed and ground truth
+    density fields. This is the ultimate measure of reconstruction success, as it directly
+    quantifies how well the algorithm recovers the initial density field.
+
+  **CRITICAL: Preserve Large-Scale Structure (Small k) - PER-BIN CONSTRAINT**
+  - For small k values (k ~ 0.01-0.2 h/Mpc), r(k) must NOT degrade from the baseline algorithm.
+  - **PENALTY: If ANY k bin in [0.01, 0.2] performs worse than baseline, penalty = 10 x max_degradation**
+  - Focus on improving small-scale (large k > 0.2) reconstruction WITHOUT hurting ANY large-scale bin.
+
+  **CRITICAL REQUIREMENT: FULLY DIFFERENTIABLE CODE (JAX)**
+  This evolution run uses **Autodiff Parameter Optimization**. Your code MUST be fully differentiable
+  using JAX operations. This means:
+
+  1. **Use jax.numpy (jnp) instead of numpy (np)** for ALL numerical operations in the EVOLVE-BLOCK
+  2. **Avoid non-differentiable operations:**
+     - No `if/else` based on array values (use `jnp.where` instead)
+     - No `for` loops over array elements (use vectorized operations or jax.lax.fori_loop)
+     - No `.astype(int)` for indexing (this breaks gradients) - use soft indexing or interpolation
+     - No in-place modifications (JAX arrays are immutable)
+
+  3. **TUNABLE Parameters with Autodiff:**
+     ```python
+     # TUNABLE: param_name = default_value, bounds=(min, max), method=autodiff
+
+     def my_function(data, param_name=default_value):
+         result = jnp.exp(-data * param_name)  # Gradients can flow through this
+         return result
+     ```
+
+  **HARD CONSTRAINT: MAXIMUM 10 TUNABLE PARAMETERS**
+  Your program MUST NOT have more than 10 TUNABLE parameters. This is a strict requirement.
+  - Programs with more than 10 parameters will be REJECTED
+  - Focus on the most impactful parameters rather than adding many small ones
+  - Quality over quantity: choose parameters that meaningfully affect the reconstruction
+
+  **Current Algorithm Structure (Iterative Reconstruction):**
+  The baseline algorithm (RecCal_multi) performs iterative reconstruction:
+  1. Initialize particles on a regular grid
+  2. For each iteration (typically 8 iterations):
+     - Paint particle positions to density grid using CIC
+     - Apply Gaussian smoothing with DECREASING scale: R = decay_factor^i x R_init, min=R_min
+     - Compute Zeldovich displacement from smoothed density
+     - Shift particle positions backward by displacement
+  3. Accumulate total displacement field
+  4. Estimate linear density from divergence of total displacement
+
+  **Key Tunable Parameters:**
+  - R_init: Initial smoothing scale (Mpc/h), typically 10-20
+  - R_min: Minimum smoothing scale (Mpc/h), typically 1-2
+  - decay_factor: How fast R decreases each iteration, typically 0.5
+
+  **Embrace Radical Innovation: Think Beyond the Literature**
+  Be bold, creative, and unconventional. Consider:
+
+  *   **Advanced Smoothing Strategies:** Adaptive, wavelet-based, optimal filtering, k-dependent
+  *   **Beyond Zeldovich:** 2LPT, higher-order corrections, nonlinear damping
+  *   **Iterative Refinement:** Momentum acceleration, adaptive step sizes, residual connections
+  *   **Novel Convergence:** Different stopping criteria, gradient accumulation
+  *   **Multi-scale Methods:** Different smoothing for different scales, hierarchical approach
+
+  **Problem Context & Constants:**
+  ```python
+  BoxSize = 1000    # Mpc/h
+  NMesh = 256       # grid resolution
+  Kf = 2 * jnp.pi / BoxSize
+  n_iterations = 8  # typically 8 iterations
+  ```
+
+  **IMPORTANT: Isotropy**
+  The underlying cosmological density field is **statistically isotropic**.
+  Your reconstruction algorithm should respect this symmetry:
+  - Do NOT treat x, y, z directions differently
+  - Use isotropic kernels (spherically symmetric Gaussians)
+  - Parameters should not depend on spatial direction
+
+  **Input/Output:**
+  - Input: 3D density field (256^3 array, 1+delta format)
+  - Output: Reconstructed initial density field (256^3 array, delta format)
+  - Evaluation: Cross-correlation r(k) in range [0.01, 0.5] h/Mpc
+
+  **Allowed Tools:**
+  * You MUST use JAX (`jax`, `jax.numpy as jnp`) for all differentiable operations
+  * You may use `scipy` for non-differentiable utilities
+  * Always include explicit `import` statements
+
+  **Key Performance Metric:**
+  Average r(k) in range [0.01, 0.5] h/Mpc is the primary score.
+  Higher values (closer to 1.0) indicate better reconstruction quality.
+
+  **Scoring with Per-Bin Large-Scale Penalty:**
+  - Base score = average r(k) over [0.01, 0.5] h/Mpc
+  - For each k bin in [0.01, 0.2], compute degradation = max(0, baseline_r(k) - your_r(k))
+  - Penalty = 10 x max(degradation across all 8 bins)
+  - Combined score = base_score - penalty
+
+evaluator_script: "examples/iterative_reconstruction/evaluate.py"
+init_program_path: "examples/iterative_reconstruction/initial.py"
+
+# Evolution parameters
+num_generations: 10000
+
+# LLM model configuration
+models:
+  models:
+    - "gemini-3-pro-preview"
+    - "gpt-5.2"
+    - "gemini-3-flash-preview"
+    - "o4-mini"
+  weights:
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
+  temperature: 0.7
+  max_tokens: 16384
+  adaptive_selection: true
+  selection_algorithm: "ucb"
+  exploration_factor: 1.0
+
+# Patch policy
+patch_policy:
+  modes:
+    - "differential"
+    - "holistic"
+    - "synthesis"
+  weights:
+    - 0.4
+    - 0.4
+    - 0.2
+  adaptive: true
+  stagnation_threshold: 10
+
+# Population configuration
+population:
+  islands:
+    enabled: true
+    num_islands: 4
+    island_capacity: 15
+    migration_interval: 5
+    migration_rate: 0.1
+  archive:
+    enabled: true
+    max_size: 50
+    elite_count: 10
+  selection_strategy: "adaptive"
+  exploitation_ratio: 0.6
+
+# Inner-loop parameter optimization
+optimization:
+  enabled: true
+  max_budget: 20
+
+# Executor configuration
+executor:
+  mode: "local"
+  max_parallel_jobs: 4
+  timeout: 600.0
+
+# Storage
+storage:
+  db_path: "evolution.db"
+  checkpoint_interval: 5
+  keep_all_programs: true
+
+# Reporting
+report:
+  enabled: true
+  include_lineage: true
+  include_analysis: true
+
+# Prompt settings
+include_text_feedback: true
+include_metrics_history: true

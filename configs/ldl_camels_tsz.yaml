@@ -1,0 +1,198 @@
+# MadEvolve Configuration: LDL CAMELS tSZ (Thermal Sunyaev-Zeldovich)
+#
+# Run with:
+#   source .env
+#   python -m madevolve run -c configs/ldl_camels_tsz.yaml -o ./results/ldl_camels_tsz
+
+# Task definition
+task_description: |
+  You are a scientific pioneer and expert numerical cosmologist specializing in
+  Lagrangian Deep Learning (LDL) for cosmological simulations.
+
+  Your mission is to **evolve and improve the LDL model architecture** to better predict
+  the **thermal Sunyaev-Zeldovich (tSZ) effect signal** from dark matter particle positions
+  using CAMELS simulation data.
+
+  **Physical Context - LDL for tSZ Signal (Electron Pressure):**
+  The tSZ effect arises from inverse Compton scattering of CMB photons by hot gas in galaxy clusters.
+  The signal is proportional to the **electron pressure field: n_e x T** (electron number density
+  times temperature). Unlike stellar mass, the tSZ signal:
+
+  - Traces hot gas in galaxy clusters (>10^6 K)
+  - Is sensitive to AGN/supernova feedback
+  - Requires modeling both density (n_e) and temperature (T) fields
+  - Has stronger small-scale fluctuations due to gas physics
+  - Is critical for CMB experiments (Planck, ACT, SPT)
+
+  **Target Field:** n_e x T [cm^-3 K] - Electron pressure field
+
+  **Core Objective (Absolute Priority):**
+  - **MAXIMIZE cross-correlation r(k) averaged over ALL scales** - THIS IS THE FITNESS METRIC
+  - Maintain **numerical stability** across different configurations
+  - Ensure **physical consistency** (no negative pressure, reasonable temperature range)
+  - Secondary monitoring: Transfer function T(k), validation loss (not used in fitness)
+
+  **Embrace Radical Innovation: Think Beyond the Baseline**
+  Your main task is to generate novel architectural improvements that surpass the baseline.
+  Be bold and creative. Consider:
+
+  *   **Multi-scale Processing:** Different physics at different scales (halos, filaments, voids)
+  *   **Residual Connections:** Like ResNets, for better gradient flow and feature preservation
+  *   **Adaptive Filters:** Make filter properties depend on local density or scale
+  *   **Physical Priors:** Incorporate known physics (density thresholds, mass conservation)
+  *   **Advanced Activations:** Beyond ReLU - learnable, piece-wise, scale-dependent
+
+  **Model Components You Can Evolve:**
+
+  1. **Displacement Operator** (`Displacement` function):
+     - Fourier-space filter design (currently: double Gaussian with power law)
+     - Nonlinear density transformations (currently: delta^gamma)
+     - Number and structure of displacement layers
+     - Skip connections between layers
+
+  2. **Baryon Bias Transformation** (`LDL` function):
+     - Activation functions (currently: ReLU)
+     - Nonlinear transformations (currently: b1*delta^mu + b0)
+     - Multi-branch or multi-scale architectures
+     - Density-dependent bias functions
+
+  3. **Smoothing Kernel** (`smoothing` function):
+     - Scale weighting in loss function (currently: k^(-n) + 1)
+     - Multi-scale loss strategies
+     - Physically-motivated scale penalties
+
+  **Problem Context & Constants:**
+  3-D periodic simulation box:
+  ```python
+  BoxSize = cosmology['BoxSize']  # typically ~100-200 Mpc/h
+  NMESH = 64                      # grid resolution
+  DOWNSAMPLE = 16                 # particle downsampling factor
+  Nstep = 3                       # number of displacement layers (paper uses 3 for tSZ)
+  TARGET = 'nT'                   # tSZ signal: electron pressure n_e x T
+  ```
+
+  **CONSTRAINTS AND BEST PRACTICES:**
+
+  MUST MAINTAIN:
+  1. Function signatures of `Displacement` and `LDL`
+  2. vmad compatibility (all operations must be differentiable)
+  3. MPI compatibility (distributed arrays)
+  4. Numerical stability (use epsilon=1e-8 to avoid div/0)
+  5. The EVOLVE-BLOCK-START and EVOLVE-BLOCK-END markers
+
+  ALLOWED vmad OPERATIONS:
+  - Arithmetic: +, -, *, /
+  - vmad.unary: exp, log, log10, sin, cos, tan, sinh, cosh, arcsin, arccos, arctan, absolute, fabs, sinc
+  - vmad.linalg: take, stack, sum, sumat, broadcast_to, reshape, transpose, concatenate, einsum, matmul, add, mul, div, mod, pow
+  - vmad.lib.fastpm: r2c, c2r, paint, readout, decompose, exchange, gather, apply_transfer, fourier_space_neg_gradient
+  - vmad.lib.mpi: allreduce, allbcast
+  - Custom operators with @operator decorator
+
+  DO NOT:
+  - Use unary.sqrt (use x**0.5), unary.tanh (use sinh(x)/cosh(x)), unary.clip
+  - Import libraries outside vmad/fastpm/pmesh/nbodykit ecosystem inside EVOLVE-BLOCK
+  - Use in-place operations (x *= 2) -> use x = x * 2
+  - Add print statements in evolved functions (breaks vmad)
+  - Modify helper functions outside EVOLVE block
+  - Use param[i] indexing -> use linalg.take(param, i, axis=0)
+
+  **Evaluation Metrics:**
+
+  Primary metric: `combined_score` (higher is better)
+  ```
+  combined_score = mean_r_k_all_scales - failed_runs * 1000.0
+  ```
+
+  Where `mean_r_k_all_scales` is computed on:
+  - **Full volume** (entire simulation box)
+  - **All k scales** (all valid k modes from kmin=0.01 to kmax=10.0)
+  - Range: [0, 1], where 1.0 = perfect correlation
+
+  **Two-Stage Evaluation:**
+  - Stage 1: Train on CV_0 (training set) with L-BFGS-B optimization
+  - Stage 2: Validate on CV_1, CV_2, CV_3, CV_4 (validation sets) using trained parameters
+  - Fitness is averaged across all validation sets for robustness
+
+  **Allowed Tools:**
+  - vmad ecosystem: vmad, fastpm, pmesh, nbodykit (required for differentiable operations)
+  - numpy, scipy for non-evolved code sections
+  - Always include explicit import statements for self-contained code
+
+evaluator_script: "examples/ldl_camels/evaluate.py"
+init_program_path: "examples/ldl_camels/initial.py"
+
+# Evolution parameters
+num_generations: 10000
+
+# LLM model configuration
+models:
+  models:
+    - "gemini-3-pro-preview"
+    - "gpt-5.2"
+    - "gemini-3-flash-preview"
+    - "o4-mini"
+  weights:
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
+  temperature: 0.7
+  max_tokens: 16384
+  adaptive_selection: true
+  selection_algorithm: "ucb"
+  exploration_factor: 1.0
+
+# Patch policy
+patch_policy:
+  modes:
+    - "differential"
+    - "holistic"
+    - "synthesis"
+  weights:
+    - 0.4
+    - 0.4
+    - 0.2
+  adaptive: true
+  stagnation_threshold: 10
+
+# Population configuration
+population:
+  islands:
+    enabled: true
+    num_islands: 4
+    island_capacity: 15
+    migration_interval: 5
+    migration_rate: 0.1
+  archive:
+    enabled: true
+    max_size: 50
+    elite_count: 10
+  selection_strategy: "adaptive"
+  exploitation_ratio: 0.6
+
+# Inner-loop parameter optimization
+optimization:
+  enabled: true
+  max_budget: 20
+
+# Executor configuration
+executor:
+  mode: "local"
+  max_parallel_jobs: 2
+  timeout: 1800.0
+
+# Storage
+storage:
+  db_path: "evolution.db"
+  checkpoint_interval: 5
+  keep_all_programs: true
+
+# Reporting
+report:
+  enabled: true
+  include_lineage: true
+  include_analysis: true
+
+# Prompt settings
+include_text_feedback: true
+include_metrics_history: true

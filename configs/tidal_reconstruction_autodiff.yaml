@@ -1,0 +1,174 @@
+# MadEvolve Configuration: Tidal Reconstruction with Autodiff
+#
+# Run with:
+#   source .env
+#   python -m madevolve run -c configs/tidal_reconstruction_autodiff.yaml -o ./results/tidal_autodiff
+
+# Task definition
+task_description: |
+  You are a scientific pioneer and expert numerical cosmologist at the bleeding edge of your field.
+  Your mission is to **invent new 21cm reconstruction algorithms that challenge and surpass the current state-of-the-art**.
+
+  **Physical Context - 21cm Reconstruction:**
+  In 21cm intensity mapping, bright astrophysical foregrounds wipe out long-wavelength **line-of-sight** modes (small k_parallel),
+  so the observed map is missing exactly the large-scale information most cross-correlations need. However, those large-scale
+  density fluctuations still leave a footprint: they **tidally modulate** small-scale clustering in an **anisotropic** way.
+  The direction and strength of this anisotropy encode the large-scale field we lost—especially for **high k_perp, low k_parallel** modes.
+
+  **Core Objective (Absolute Priority):**
+  * **Maximize avg(r_2D[1:6, 1:6])** where r_2D(k_perp-bin, k_parallel-bin) is the Fourier-space correlation coefficient
+    between your reconstruction (delta_hat) and the ground truth (delta_true).
+  * **Key Intuition:** Push r_2D up in the **high-k_perp, low-k_parallel** region, indicating better recovery of the
+    large-scale line-of-sight modes inferred from small-scale anisotropies.
+  * This measures how well the algorithm recovers the density field across scales and directions, with emphasis on
+    the physically most important regime where tidal effects are strongest.
+
+  **CRITICAL REQUIREMENT: FULLY DIFFERENTIABLE CODE (JAX)**
+  This evolution run uses **Autodiff Parameter Optimization**. Your code MUST be fully differentiable
+  using JAX operations. This means:
+
+  1. **Use jax.numpy (jnp) instead of numpy (np)** for ALL numerical operations in the EVOLVE-BLOCK
+  2. **Avoid non-differentiable operations:**
+     - No `if/else` based on array values (use `jnp.where` instead)
+     - No `for` loops over array elements (use vectorized operations)
+     - No `.astype(int)` for indexing (this breaks gradients) - use soft indexing or interpolation
+     - No in-place modifications (JAX arrays are immutable)
+
+  3. **TUNABLE Parameters with Autodiff:**
+     ```python
+     # TUNABLE: param_name = default_value, bounds=(min, max), method=autodiff
+
+     def my_function(data, param_name=default_value):
+         # Use param_name in differentiable operations
+         result = jnp.exp(-data * param_name)  # Gradients can flow through this
+         return result
+     ```
+
+  4. **Examples of differentiable vs non-differentiable code:**
+     ```python
+     # BAD (non-differentiable):
+     idx = (pos / cell_size).astype(int)  # .astype(int) breaks gradients
+     grid[idx] = value  # In-place assignment breaks gradients
+
+     # GOOD (differentiable):
+     weights = jnp.exp(-distance**2 / sigma**2)  # Smooth, differentiable
+     result = jnp.sum(values * weights)  # Differentiable reduction
+     ```
+
+  **HARD CONSTRAINT: MAXIMUM 10 TUNABLE PARAMETERS**
+  Your program MUST NOT have more than 10 TUNABLE parameters. This is a strict requirement.
+  - Programs with more than 10 parameters will be REJECTED
+  - Focus on the most impactful parameters rather than adding many small ones
+  - Quality over quantity: choose parameters that meaningfully affect the reconstruction
+
+  **Embrace Radical Innovation: Think Beyond the Literature**
+  Your main task is to generate novel ideas that are **not found in existing cosmology literature**.
+  Be bold, creative, and unconventional. Consider:
+
+  *   **Differentiable Physics:** Implement physics-based constraints that are differentiable
+  *   **Soft Assignments:** Replace hard binning/indexing with soft, differentiable alternatives
+  *   **Neural-Inspired Architectures:** Use differentiable operations inspired by neural networks
+  *   **Multi-scale Approaches:** Different smoothing scales for different k-modes, all differentiable
+  *   **Iterative Refinement:** Differentiable iterative algorithms with learnable step sizes
+  *   **Anisotropic Filtering:** Leverage the k_perp/k_para asymmetry of the tidal signal
+
+  **Problem Context & Constants:**
+  3-D periodic simulation boxes:
+  ```python
+  BoxSize = 1000    # Mpc/h
+  NMesh = 512       # grid resolution
+  Kf = 2 * jnp.pi / BoxSize
+  ```
+
+  **Input/Output:**
+  - Input: 3D degraded density field (512^3 array, 1+delta format)
+  - Output: Reconstructed density field (512^3 array, 1+delta format)
+  - Evaluation: 2D cross-correlation r_2D(k_perp, k_para), metric = avg(r_2D[1:6, 1:6])
+
+  **Allowed Tools:**
+  * You MUST use JAX (`jax`, `jax.numpy as jnp`) for all differentiable operations
+  * You may use `scipy` for non-differentiable utilities (file I/O, etc.)
+  * Always include explicit `import` statements for self-contained code
+
+  **Key Performance Metric:**
+  Average r_2D[1:6, 1:6] is the primary score.
+  Higher values (closer to 1.0) indicate better reconstruction quality.
+
+evaluator_script: "examples/tidal_reconstruction_auto_diff/evaluate_autodiff.py"
+init_program_path: "examples/tidal_reconstruction_auto_diff/initial_autodiff.py"
+
+# Evolution parameters
+num_generations: 10000
+
+# LLM model configuration
+models:
+  models:
+    - "gemini-3-pro-preview"
+    - "gpt-5.2"
+    - "gemini-3-flash-preview"
+    - "o4-mini"
+  weights:
+    - 0.25
+    - 0.25
+    - 0.25
+    - 0.25
+  temperature: 0.7
+  max_tokens: 16384
+  adaptive_selection: true
+  selection_algorithm: "ucb"
+  exploration_factor: 1.0
+
+# Patch policy (diff, holistic, synthesis = cross)
+patch_policy:
+  modes:
+    - "differential"
+    - "holistic"
+    - "synthesis"
+  weights:
+    - 0.4
+    - 0.4
+    - 0.2
+  adaptive: true
+  stagnation_threshold: 10
+
+# Population configuration
+population:
+  islands:
+    enabled: true
+    num_islands: 4
+    island_capacity: 15
+    migration_interval: 5
+    migration_rate: 0.1
+  archive:
+    enabled: true
+    max_size: 50
+    elite_count: 10
+  selection_strategy: "adaptive"
+  exploitation_ratio: 0.6
+
+# Inner-loop parameter optimization
+optimization:
+  enabled: true
+  max_budget: 20
+
+# Executor configuration
+executor:
+  mode: "local"
+  max_parallel_jobs: 4
+  timeout: 1200
+
+# Storage
+storage:
+  db_path: "evolution.db"
+  checkpoint_interval: 5
+  keep_all_programs: true
+
+# Reporting
+report:
+  enabled: true
+  include_lineage: true
+  include_analysis: true
+
+# Prompt settings
+include_text_feedback: true
+include_metrics_history: true
